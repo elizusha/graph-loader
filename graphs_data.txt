@@ -1,3 +1,3 @@
-wikidata-collab-1-crawler/1_disprot.org/nq_data_https_common_graph
-wikidata-collab-1-crawler/mobidb.org/nq_data_https_common_graph
+wikidata-collab-1-crawler/1_disprot.org/single_file
+wikidata-collab-1-crawler/mobidb.org/single_file
 subsets_bucket/nt files/Life sciences graph with Schema types/Protein N quads

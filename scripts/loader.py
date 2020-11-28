@@ -12,18 +12,19 @@ from urllib.parse import urlencode
 def download_files(
     client: Client, bucket_name: str, blobs_directory_name: str
 ) -> Iterator[str]:
-    logging.info(f"Using following GCS bucket: {bucket_name}")
-    logging.info(f"Using following GCS directory: {blobs_directory_name}")
+    logging.info(f"Using following GCS bucket: '{bucket_name}'")
+    logging.info(f"Using following GCS directory: '{blobs_directory_name}'")
     bucket = client.bucket(bucket_name)
     all_blobs = list(client.list_blobs(bucket, prefix=blobs_directory_name))
     for blob in all_blobs:
-        logging.info(f"Downloading {blob.name}")
+        logging.info(f"Downloading '{blob.name}'")
         if blob.name[-3:] == ".nq":
             data = blob.download_as_string().decode()
-            logging.info(f"Succesfully downloaded: {blob.name}")
+            logging.info(f"Succesfully downloaded: '{blob.name}'")
             yield data
         else:
-            logging.warning(f" {blob.name} is not .nq file")
+            logging.warning(
+                f"Not downloading '{blob.name}': it is not .nq file")
 
 
 def parse_graph(file_contents: str) -> ConjunctiveGraph:
@@ -37,48 +38,25 @@ def build_insert_queries(graph: ConjunctiveGraph) -> List[str]:
         graph_name = term[3].identifier
         break
     nt_data = graph.serialize(format="nt").decode()
-    logging.info(f"GRAPH: {graph_name}")
+    logging.info(f"Graph name is {graph_name}")
     nts = nt_data.split("\n")
     queries = []
     step = 1000
     for i in range(0, len(nts), step):
         nt_part = "\n".join(nts[i:min(i+step, len(nts))])
-        queries.append(f"INSERT DATA {{ GRAPH <{graph_name}> {{ {nt_part} }} }}")
+        queries.append(
+            f"INSERT DATA {{ GRAPH <{graph_name}> {{ {nt_part} }} }}")
     return queries
 
 
 def insert_data(blazegraph_url: str, insert_query: str) -> None:
     res = requests.post(blazegraph_url, data={"update": insert_query})
-    logging.info(f"GRAPH: Insert data. Response: {res}")
+    if not res.ok:
+        logging.warning(f"Failed to insert data into graph: {res}")
 
 
 def load_data_from_cloud(args):
-    client = Client()
-    if args.remove_previous_graph:
-        run_graph_command = [
-            "docker",
-            "rm",
-            "-f",
-            f"blazegraph{args.port}"
-        ]
-        run_graph_command_output = subprocess.run(run_graph_command, capture_output=True)
-        logging.info(f"GRAPH: Blazegraph{args.port} removed.")
-    logging.info(f"GRAPH: Run blazegraph.")
-    run_graph_command = [
-        "docker",
-        "run",
-        "--name",
-        f"blazegraph{args.port}",
-        "-d",
-        "-v",
-        "/home/elizusha/graph-loader/data:/stuff",
-        "-p",
-        f"{args.port}:8080",
-        "lyrasis/blazegraph:2.1.5",
-    ]
-    run_graph_command_output = subprocess.run(run_graph_command, capture_output=True)
-    logging.info(f"GRAPH: Blazegraph created. Port: {args.port}")
-    time.sleep(5)
+    client = Client.create_anonymous_client()
     blazegraph_url = f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
     with open("../graphs_data.txt") as data_file:
         for path in data_file.readlines():
@@ -87,9 +65,54 @@ def load_data_from_cloud(args):
                 client, bucket_name, blobs_directory_name
             ):
                 graph: ConjunctiveGraph = parse_graph(file_contents)
-                insert_queries: str = build_insert_queries(graph)
-                for query in insert_queries:
+                insert_queries: List[str] = build_insert_queries(graph)
+                for i, query in enumerate(insert_queries):
+                    logging.info(
+                        f"Running insert query {i+1} / {len(insert_queries)}")
                     insert_data(blazegraph_url, query)
+
+
+def initialize_blazegraph(args):
+    container_name = f"blazegraph{args.port}"
+    if args.remove_previous_graph:
+        logging.info(
+            f"Removing blazegraph container {container_name}")        
+        remove_graph_command = [
+            "docker",
+            "rm",
+            "-f",
+            container_name
+        ]
+        process = subprocess.run(
+            remove_graph_command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, encoding="utf-8")
+        if process.returncode != 0:
+            logging.error(
+                f"Failed to remove blazegraph container. Docker output:\n{process.stdout}")
+            raise Exception("Failed to remove blazegraph container")
+        logging.info(f"Container {container_name} removed.")
+
+    logging.info(
+        f"Running blazegraph container {container_name} on host port {args.port}")
+    run_graph_command = [
+        "docker",
+        "run",
+        "--name",
+        container_name,
+        "-d",
+        "-p",
+        f"{args.port}:8080",
+        "lyrasis/blazegraph:2.1.5",
+    ]
+    process = subprocess.run(
+        run_graph_command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, encoding="utf-8")
+    if process.returncode != 0:
+        logging.error(
+            f"Failed to create blazegraph container. Docker output:\n{process.stdout}")
+        raise Exception("Failed to create blazegraph container")
+    logging.info(
+        f"Blazegraph container created. Listening on host port {args.port}")
+    # Blazegraph takes some time to start.
+    time.sleep(5)
 
 
 def parse_args():
@@ -125,6 +148,7 @@ def _configure_logging():
 def main():
     args = parse_args()
     _configure_logging()
+    initialize_blazegraph(args)
     load_data_from_cloud(args)
 
 

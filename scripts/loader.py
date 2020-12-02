@@ -6,7 +6,7 @@ import time
 from google.cloud.storage import Client
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
 from typing import Iterator, List
-from urllib.parse import urlencode
+from urllib.parse import quote_plus
 
 
 def download_files(
@@ -41,11 +41,22 @@ def build_insert_queries(graph: ConjunctiveGraph) -> List[str]:
     logging.info(f"Graph name is {graph_name}")
     nts = nt_data.split("\n")
     queries = []
-    step = 1000
-    for i in range(0, len(nts), step):
-        nt_part = "\n".join(nts[i:min(i+step, len(nts))])
-        queries.append(
-            f"INSERT DATA {{ GRAPH <{graph_name}> {{ {nt_part} }} }}")
+    MAX_QUERY_LENGTH: int = 200000 - 100
+    query_len = 0
+    query_data = []
+    for i in range(0, len(nts)):
+        nq_encoded_len = len(quote_plus(nts[i]+"\n"))
+        if query_len + nq_encoded_len > MAX_QUERY_LENGTH:
+            query_data_str = "\n".join(query_data)
+            queries.append(
+                f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}")
+            query_len = 0
+            query_data = []
+        query_len += nq_encoded_len
+        query_data.append(nts[i])
+    query_data_str: str = '\n'.join(query_data)
+    queries.append(
+        f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}")
     return queries
 
 
@@ -76,7 +87,7 @@ def initialize_blazegraph(args):
     container_name = f"blazegraph{args.port}"
     if args.remove_previous_graph:
         logging.info(
-            f"Removing blazegraph container {container_name}")        
+            f"Removing blazegraph container {container_name}")
         remove_graph_command = [
             "docker",
             "rm",

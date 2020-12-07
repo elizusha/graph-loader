@@ -5,7 +5,7 @@ This repository contains a script to demonstrate joining schema.org data from se
 Follow this instruction to get a graph with biological data from three sources (https://disprot.org, https://mobidb.org, https://www.wikidata.org) stored in [Blazegraph](https://blazegraph.com) running inside of a Docker container:
 
 1. Make sure Docker is [installed](https://docs.docker.com/engine/install) and [can be run without sudo](https://docs.docker.com/engine/install/linux-postinstall/#manage-docker-as-a-non-root-user)
-1. Install Python dependences by running the following command from the root of this repository: 
+1. Install Python dependencies by running the following command from the root of this repository: 
     ```
     pip3 install -r scripts/requirements.txt
     ```

@@ -16,6 +16,9 @@ def download_files(
     logging.info(f"Using following GCS directory: '{blobs_directory_name}'")
     bucket = client.bucket(bucket_name)
     all_blobs = list(client.list_blobs(bucket, prefix=blobs_directory_name))
+    if not all_blobs:
+        logging.warning(
+            f"GCS path error: '{blobs_directory_name}' not found or doesn't contain nq files")        
     for blob in all_blobs:
         logging.info(f"Downloading '{blob.name}'")
         if blob.name[-3:] == ".nq":
@@ -66,21 +69,39 @@ def insert_data(blazegraph_url: str, insert_query: str) -> None:
         logging.warning(f"Failed to insert data into graph: {res}")
 
 
-def load_data_from_cloud(args):
+def get_data_directories(args):
+    directories = []
+    if args.data_list:
+        try:
+            directories = [dir.strip() for dir in args.data_list.split(",")]
+        except Exception as e:
+            logging.error(
+                f"Failed to read paths in data_list. Output:\n{e}")
+            raise Exception("Failed to read paths in data_list.")
+    else:
+        try:
+            with open(args.data_file) as data_file:
+                directories = [dir.strip() for dir in data_file.readlines()]
+        except Exception as e:
+            logging.error(
+                f"Failed to read paths from data file. Output:\n{e}")
+            raise Exception("Failed to read paths from data file.")
+    return directories
+
+def load_data_from_cloud(args, data_directories):
     client = Client.create_anonymous_client()
     blazegraph_url = f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
-    with open("../graphs_data.txt") as data_file:
-        for path in data_file.readlines():
-            bucket_name, blobs_directory_name = path.strip().split("/", maxsplit=1)
-            for file_contents in download_files(
-                client, bucket_name, blobs_directory_name
-            ):
-                graph: ConjunctiveGraph = parse_graph(file_contents)
-                insert_queries: List[str] = build_insert_queries(graph)
-                for i, query in enumerate(insert_queries):
-                    logging.info(
-                        f"Running insert query {i+1} / {len(insert_queries)}")
-                    insert_data(blazegraph_url, query)
+    for path in data_directories:
+        bucket_name, blobs_directory_name = path.split("/", maxsplit=1)
+        for file_contents in download_files(
+            client, bucket_name, blobs_directory_name
+        ):
+            graph: ConjunctiveGraph = parse_graph(file_contents)
+            insert_queries: List[str] = build_insert_queries(graph)
+            for i, query in enumerate(insert_queries):
+                logging.info(
+                    f"Running insert query {i+1} / {len(insert_queries)}")
+                insert_data(blazegraph_url, query)
 
 
 def initialize_blazegraph(args):
@@ -139,6 +160,15 @@ def parse_args():
         default=False,
         help="remove previous blazegraph if exists",
     )
+    parser.add_argument(
+        "--data_file",
+        help="file with nq directories in gcs",
+        default="../graphs_data.txt",
+    )
+    parser.add_argument(
+        "--data_list",
+        help="nq directories in gcs",
+    )
     return parser.parse_args()
 
 
@@ -159,8 +189,9 @@ def _configure_logging():
 def main():
     args = parse_args()
     _configure_logging()
+    data_directories = get_data_directories(args)
     initialize_blazegraph(args)
-    load_data_from_cloud(args)
+    load_data_from_cloud(args, data_directories)
 
 
 if __name__ == "__main__":

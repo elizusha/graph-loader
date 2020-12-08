@@ -1,4 +1,4 @@
-wikidata-collab-1-graph/disprot.org/single_file
-gs://wikidata-collab-1-crawler/1_disprot.org/single_file
-gs://wikidata-collab-1-crawler/mobidb.org/single_file
-gs://wikidata-collab-1-crawler/wikidata.org/wiki_nq
+wikidata-collab-1-graph/disprot.org/single_file	https://creativecommons.org/licenses/by/4.0/
+wikidata-collab-1-crawler/1_disprot.org/single_file	https://creativecommons.org/licenses/by/4.0/
+wikidata-collab-1-crawler/mobidb.org/single_file	https://creativecommons.org/licenses/by/4.0/
+wikidata-collab-1-crawler/wikidata.org/wiki_nq	https://creativecommons.org/publicdomain/zero/1.0/

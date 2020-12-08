@@ -5,7 +5,7 @@ import logging
 import time
 from google.cloud.storage import Client
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
-from typing import Iterator, List
+from typing import Iterator, List, NamedTuple
 from urllib.parse import quote_plus
 
 
@@ -78,15 +78,24 @@ def insert_data(blazegraph_url: str, insert_query: str) -> None:
         logging.warning(f"Failed to insert data into graph: {res}")
 
 
-def get_data_directories(args):
+class DataDirectory(NamedTuple):
+    path: str
+    license_url: str
+
+    @classmethod
+    def parse(cls, data_directory_str: str) -> "DataDirectory":
+        chunks = data_directory_str.split("\t")
+        path = chunks[0].strip()
+        license = ""
+        if len(chunks) > 1:
+            license = chunks[1].strip()
+        return cls(path, license)
+
+
+def get_data_directories(args) -> List[DataDirectory]:
     directories = []
     if args.data_list:
-        try:
-            directories = [dir.strip() for dir in args.data_list.split(",")]
-        except Exception as e:
-            logging.error(
-                f"Failed to read paths in data_list. Output:\n{e}")
-            raise Exception("Failed to read paths in data_list.")
+        directories = [dir.strip() for dir in args.data_list.split(",")]
     else:
         try:
             with open(args.data_file) as data_file:
@@ -95,12 +104,22 @@ def get_data_directories(args):
             logging.error(
                 f"Failed to read paths from data file. Output:\n{e}")
             raise Exception("Failed to read paths from data file.")
-    return directories
+    return [
+        DataDirectory.parse(data_directory_str)
+        for data_directory_str in directories
+    ]
+
+
+def print_license(license):
+    if license:
+        logging.info(f"License: {license}")
+
 
 def load_data_from_cloud(args, data_directories):
     blazegraph_url = f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
-    for path in data_directories:
-        for file_contents in download_files(path):
+    for data_directory in data_directories:
+        print_license(data_directory.license_url)
+        for file_contents in download_files(data_directory.path):
             graph: ConjunctiveGraph = parse_graph(file_contents)
             if args.blazegraph:
                 insert_queries: List[str] = build_blazegraph_insert_queries(graph)

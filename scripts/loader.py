@@ -9,16 +9,25 @@ from typing import Iterator, List
 from urllib.parse import quote_plus
 
 
-def download_files(
-    client: Client, bucket_name: str, blobs_directory_name: str
-) -> Iterator[str]:
+def create_gcs_client():
+    try:
+        return Client()
+    except Exception as e:
+        logging.info(
+            f"Failed to create authenticated gcs client, defaulting to anonymous. Error:\n{e}")
+        return Client.create_anonymous_client()
+
+
+def download_files(path: str) -> Iterator[str]:
+    client = create_gcs_client()
+    bucket_name, blobs_directory_name = path.split("/", maxsplit=1)
     logging.info(f"Using following GCS bucket: '{bucket_name}'")
     logging.info(f"Using following GCS directory: '{blobs_directory_name}'")
     bucket = client.bucket(bucket_name)
     all_blobs = list(client.list_blobs(bucket, prefix=blobs_directory_name))
     if not all_blobs:
         logging.warning(
-            f"GCS path error: '{blobs_directory_name}' not found or doesn't contain nq files")        
+            f"GCS path error: '{blobs_directory_name}' not found or doesn't contain nq files")
     for blob in all_blobs:
         logging.info(f"Downloading '{blob.name}'")
         if blob.name[-3:] == ".nq":
@@ -36,7 +45,7 @@ def parse_graph(file_contents: str) -> ConjunctiveGraph:
     return graph
 
 
-def build_insert_queries(graph: ConjunctiveGraph) -> List[str]:
+def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
     for term in graph.quads():
         graph_name = term[3].identifier
         break
@@ -89,19 +98,18 @@ def get_data_directories(args):
     return directories
 
 def load_data_from_cloud(args, data_directories):
-    client = Client.create_anonymous_client()
     blazegraph_url = f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
     for path in data_directories:
-        bucket_name, blobs_directory_name = path.split("/", maxsplit=1)
-        for file_contents in download_files(
-            client, bucket_name, blobs_directory_name
-        ):
+        for file_contents in download_files(path):
             graph: ConjunctiveGraph = parse_graph(file_contents)
-            insert_queries: List[str] = build_insert_queries(graph)
-            for i, query in enumerate(insert_queries):
-                logging.info(
-                    f"Running insert query {i+1} / {len(insert_queries)}")
-                insert_data(blazegraph_url, query)
+            if args.blazegraph:
+                insert_queries: List[str] = build_blazegraph_insert_queries(graph)
+                for i, query in enumerate(insert_queries):
+                    logging.info(
+                        f"Running insert query {i+1} / {len(insert_queries)}")
+                    insert_data(blazegraph_url, query)
+            elif args.agraph:
+                raise Exception("Not implemented")
 
 
 def initialize_blazegraph(args):
@@ -147,6 +155,9 @@ def initialize_blazegraph(args):
     time.sleep(5)
 
 
+def initialize_agraph(args):
+    raise Exception("Not implemented")
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -169,6 +180,18 @@ def parse_args():
         "--data_list",
         help="nq directories in gcs",
     )
+    parser.add_argument(
+        "--blazegraph",
+        action="store_true",
+        default=False,
+        help="load data to Blazegraph",
+    )
+    parser.add_argument(
+        "--agraph",
+        action="store_true",
+        default=False,
+        help="load data to AllegroGraph",
+    )
     return parser.parse_args()
 
 
@@ -190,7 +213,15 @@ def main():
     args = parse_args()
     _configure_logging()
     data_directories = get_data_directories(args)
-    initialize_blazegraph(args)
+    if args.blazegraph:
+        initialize_blazegraph(args)
+    elif args.agraph:
+        initialize_agraph(args)
+    else:
+        logging.warning(
+            f"No graph selected. Default graph used: Blazegraph")
+        initialize_blazegraph(args)
+        args.blazegraph = True # TODO
     load_data_from_cloud(args, data_directories)
 
 

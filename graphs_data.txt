@@ -1,3 +1,4 @@
-wikidata-collab-1-crawler/1_disprot.org/single_file
-wikidata-collab-1-crawler/mobidb.org/single_file
-wikidata-collab-1-crawler/wikidata.org/wiki_nq
+wikidata-collab-1-graph/disprot.org/single_file
+gs://wikidata-collab-1-crawler/1_disprot.org/single_file
+gs://wikidata-collab-1-crawler/mobidb.org/single_file
+gs://wikidata-collab-1-crawler/wikidata.org/wiki_nq

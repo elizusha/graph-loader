@@ -11,22 +11,28 @@ Follow this instruction to get a graph with biological data from any sources (e.
     ```
 1. Run the graph-admin script from the root of this repository:
     1. with "initialize_graph" command to initialize new graph.
-    ```
-    python3 scripts/graph-admin.py initialize_graph --graph blazegraph
-    ```
-    Arguments:
-      --graph GRAPH_NAME - choose one of the graphs. "blazegraph" and "agraph" supported
-      --port PORT - set graph port
-      --remove_previous_graph - remove previous graph instance if exists
+        ```
+        python3 scripts/graph-admin.py initialize_graph --graph blazegraph
+        ```
+        Arguments:
+
+          --graph GRAPH_NAME - choose one of the graphs. "blazegraph" and "agraph" supported
+
+          --port PORT - set graph port
+
+          --remove_previous_graph - remove previous graph instance if exists
 
     1. with "load_data" command to load new nquads into the graph.
-    ```
-    python3 scripts/graph-admin.py load_data --graph blazegraph
-    ```
-    Arguments:
-      --graph GRAPH_NAME - choose one of the graphs. "blazegraph" and "agraph" supported
-      --data_file FILE_NAME - file with data paths. Default: "graph_data.txt"
-      --data_list LIST - data paths
+        ```
+        python3 scripts/graph-admin.py load_data --graph blazegraph
+        ```
+        Arguments:
+
+          --graph GRAPH_NAME - choose one of the graphs. "blazegraph" and "agraph" supported
+
+          --data_file FILE_NAME - file with data paths. Default: "graph_data.txt"
+
+          --data_list LIST - data paths
 
 1. Open graph UI
     1. for blazegraph web UI by navigating to http://localhost:8885/bigdata/#query

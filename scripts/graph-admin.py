@@ -14,7 +14,8 @@ def create_gcs_client():
         return Client()
     except Exception as e:
         logging.info(
-            f"Failed to create authenticated gcs client, defaulting to anonymous. Error:\n{e}")
+            f"Failed to create authenticated gcs client, defaulting to anonymous. Error:\n{e}"
+        )
         return Client.create_anonymous_client()
 
 
@@ -27,7 +28,8 @@ def download_files(path: str) -> Iterator[str]:
     all_blobs = list(client.list_blobs(bucket, prefix=blobs_directory_name))
     if not all_blobs:
         logging.warning(
-            f"GCS path error: '{blobs_directory_name}' not found or doesn't contain nq files")
+            f"GCS path error: '{blobs_directory_name}' not found or doesn't contain nq files"
+        )
     for blob in all_blobs:
         logging.info(f"Downloading '{blob.name}'")
         if blob.name[-3:] == ".nq":
@@ -35,8 +37,7 @@ def download_files(path: str) -> Iterator[str]:
             logging.info(f"Succesfully downloaded: '{blob.name}'")
             yield data
         else:
-            logging.warning(
-                f"Not downloading '{blob.name}': it is not .nq file")
+            logging.warning(f"Not downloading '{blob.name}': it is not .nq file")
 
 
 def parse_graph(file_contents: str) -> ConjunctiveGraph:
@@ -57,18 +58,18 @@ def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
     query_len = 0
     query_data = []
     for i in range(0, len(nts)):
-        nq_encoded_len = len(quote_plus(nts[i]+"\n"))
+        nq_encoded_len = len(quote_plus(nts[i] + "\n"))
         if query_len + nq_encoded_len > MAX_QUERY_LENGTH:
             query_data_str = "\n".join(query_data)
             queries.append(
-                f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}")
+                f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}"
+            )
             query_len = 0
             query_data = []
         query_len += nq_encoded_len
         query_data.append(nts[i])
-    query_data_str: str = '\n'.join(query_data)
-    queries.append(
-        f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}")
+    query_data_str: str = "\n".join(query_data)
+    queries.append(f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}")
     return queries
 
 
@@ -101,12 +102,10 @@ def get_data_directories(args) -> List[DataDirectory]:
             with open(args.data_file) as data_file:
                 directories = [dir.strip() for dir in data_file.readlines()]
         except Exception as e:
-            logging.error(
-                f"Failed to read paths from data file. Output:\n{e}")
+            logging.error(f"Failed to read paths from data file. Output:\n{e}")
             raise Exception("Failed to read paths from data file.")
     return [
-        DataDirectory.parse(data_directory_str)
-        for data_directory_str in directories
+        DataDirectory.parse(data_directory_str) for data_directory_str in directories
     ]
 
 
@@ -116,42 +115,41 @@ def print_license(license):
 
 
 def load_data_from_cloud(args, data_directories):
-    blazegraph_url = f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
     for data_directory in data_directories:
         print_license(data_directory.license_url)
         for file_contents in download_files(data_directory.path):
             graph: ConjunctiveGraph = parse_graph(file_contents)
-            if args.blazegraph:
+            if args.graph == "blazegraph":
+                blazegraph_url = f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
                 insert_queries: List[str] = build_blazegraph_insert_queries(graph)
                 for i, query in enumerate(insert_queries):
-                    logging.info(
-                        f"Running insert query {i+1} / {len(insert_queries)}")
+                    logging.info(f"Running insert query {i+1} / {len(insert_queries)}")
                     insert_data(blazegraph_url, query)
-            elif args.agraph:
+            elif args.graph == "agraph":
                 raise Exception("Not implemented")
 
 
 def initialize_blazegraph(args):
     container_name = f"blazegraph{args.port}"
     if args.remove_previous_graph:
-        logging.info(
-            f"Removing blazegraph container {container_name}")
-        remove_graph_command = [
-            "docker",
-            "rm",
-            "-f",
-            container_name
-        ]
+        logging.info(f"Removing blazegraph container {container_name}")
+        remove_graph_command = ["docker", "rm", "-f", container_name]
         process = subprocess.run(
-            remove_graph_command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, encoding="utf-8")
+            remove_graph_command,
+            stderr=subprocess.STDOUT,
+            stdout=subprocess.PIPE,
+            encoding="utf-8",
+        )
         if process.returncode != 0:
             logging.error(
-                f"Failed to remove blazegraph container. Docker output:\n{process.stdout}")
+                f"Failed to remove blazegraph container. Docker output:\n{process.stdout}"
+            )
             raise Exception("Failed to remove blazegraph container")
         logging.info(f"Container {container_name} removed.")
 
     logging.info(
-        f"Running blazegraph container {container_name} on host port {args.port}")
+        f"Running blazegraph container {container_name} on host port {args.port}"
+    )
     run_graph_command = [
         "docker",
         "run",
@@ -163,13 +161,17 @@ def initialize_blazegraph(args):
         "lyrasis/blazegraph:2.1.5",
     ]
     process = subprocess.run(
-        run_graph_command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, encoding="utf-8")
+        run_graph_command,
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        encoding="utf-8",
+    )
     if process.returncode != 0:
         logging.error(
-            f"Failed to create blazegraph container. Docker output:\n{process.stdout}")
+            f"Failed to create blazegraph container. Docker output:\n{process.stdout}"
+        )
         raise Exception("Failed to create blazegraph container")
-    logging.info(
-        f"Blazegraph container created. Listening on host port {args.port}")
+    logging.info(f"Blazegraph container created. Listening on host port {args.port}")
     # Blazegraph takes some time to start.
     time.sleep(5)
 
@@ -177,8 +179,10 @@ def initialize_blazegraph(args):
 def initialize_agraph(args):
     raise Exception("Not implemented")
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('command', help='Graph-admin command. initialize_graph and load_data commands supported')
     parser.add_argument(
         "--port",
         help="blazegraph server port",
@@ -200,16 +204,8 @@ def parse_args():
         help="nq directories in gcs",
     )
     parser.add_argument(
-        "--blazegraph",
-        action="store_true",
-        default=False,
-        help="load data to Blazegraph",
-    )
-    parser.add_argument(
-        "--agraph",
-        action="store_true",
-        default=False,
-        help="load data to AllegroGraph",
+        "--graph",
+        help="Graph to load data. blazegraph and araph types supported",
     )
     return parser.parse_args()
 
@@ -223,7 +219,7 @@ def _configure_logging():
         level=logging.DEBUG,
         handlers=[
             stream_handler,
-            logging.FileHandler(f"../loader.log"),
+            logging.FileHandler(f"../graph-admin.log"),
         ],
     )
 
@@ -231,17 +227,24 @@ def _configure_logging():
 def main():
     args = parse_args()
     _configure_logging()
-    data_directories = get_data_directories(args)
-    if args.blazegraph:
-        initialize_blazegraph(args)
-    elif args.agraph:
-        initialize_agraph(args)
+    if args.command == "initialize_graph":
+        if args.graph == "blazegraph":
+            initialize_blazegraph(args)
+        elif args.graph == "agraph":
+            initialize_agraph(args)
+        elif not args.graph:
+            logging.warning(f"No graph selected. Default graph used: Blazegraph")
+            initialize_blazegraph(args)
+            args.graph = "blazegraph"  # TODO
+        else:
+            logging.error(f"Unknown graph name {args.graph}")
+            raise Exception("Unknown graph name.")
+    elif args.command == "load_data":
+        data_directories = get_data_directories(args)
+        load_data_from_cloud(args, data_directories)
     else:
-        logging.warning(
-            f"No graph selected. Default graph used: Blazegraph")
-        initialize_blazegraph(args)
-        args.blazegraph = True # TODO
-    load_data_from_cloud(args, data_directories)
+        logging.error(f"Unknown command: {args.graph}")
+        raise Exception("Unknown command.")
 
 
 if __name__ == "__main__":

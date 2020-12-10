@@ -8,18 +8,23 @@ import os.path
 import tempfile
 from google.cloud.storage import Client
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
-from typing import Iterator, List, NamedTuple
+from typing import Iterator, List, NamedTuple, Optional
 from urllib.parse import quote_plus
 
 
+gcs_client: Optional[Client] = None
+
 def create_gcs_client():
-    try:
-        return Client()
-    except Exception as e:
-        logging.info(
-            f"Failed to create authenticated gcs client, defaulting to anonymous. Error:\n{e}"
-        )
-        return Client.create_anonymous_client()
+    global gcs_client
+    if gcs_client is None:
+        try:
+            gcs_client = Client()
+        except Exception as e:
+            logging.info(
+                f"Failed to create authenticated gcs client, defaulting to anonymous. Error:\n{e}"
+            )
+            gcs_client = Client.create_anonymous_client()
+    return gcs_client
 
 
 def download_files(path: str) -> Iterator[str]:
@@ -46,8 +51,12 @@ def download_gcs_files(path: str) -> Iterator[str]:
     bucket_name, blobs_directory_name = path.split("/", maxsplit=1)
     logging.info(f"Using following GCS bucket: '{bucket_name}'")
     logging.info(f"Using following GCS directory: '{blobs_directory_name}'")
-    bucket = client.bucket(bucket_name)
-    all_blobs = list(client.list_blobs(bucket, prefix=blobs_directory_name))
+    try:
+        bucket = client.bucket(bucket_name)
+        all_blobs = list(client.list_blobs(bucket, prefix=blobs_directory_name))
+    except Exception as e:
+        logging.error(f"Failed to list files in bucket, skipping this directory. Error:\n{e}")
+        return
     if not all_blobs:
         logging.warning(
             f"GCS path error: '{blobs_directory_name}' not found or doesn't contain nq files"

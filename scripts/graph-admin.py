@@ -7,7 +7,8 @@ from google.cloud.storage import Client
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
 from typing import Iterator, List, NamedTuple
 from urllib.parse import quote_plus
-
+import os.path
+import tempfile
 
 def create_gcs_client():
     try:
@@ -97,13 +98,16 @@ def get_data_directories(args) -> List[DataDirectory]:
     directories = []
     if args.data_list:
         directories = [dir.strip() for dir in args.data_list.split(",")]
-    else:
+    elif args.data_file:
         try:
             with open(args.data_file) as data_file:
                 directories = [dir.strip() for dir in data_file.readlines()]
         except Exception as e:
             logging.error(f"Failed to read paths from data file. Output:\n{e}")
             raise Exception("Failed to read paths from data file.")
+    else:
+        logging.error(f"One of --data_list or --data_file required.")
+        raise Exception("One of --data_list or --data_file required.")
     return [
         DataDirectory.parse(data_directory_str) for data_directory_str in directories
     ]
@@ -129,24 +133,28 @@ def load_data_from_cloud(args, data_directories):
                 raise Exception("Not implemented")
 
 
-def initialize_blazegraph(args):
+def remove_previous_graph(args):
     container_name = f"blazegraph{args.port}"
-    if args.remove_previous_graph:
-        logging.info(f"Removing blazegraph container {container_name}")
-        remove_graph_command = ["docker", "rm", "-f", container_name]
-        process = subprocess.run(
-            remove_graph_command,
-            stderr=subprocess.STDOUT,
-            stdout=subprocess.PIPE,
-            encoding="utf-8",
+    logging.info(f"Removing blazegraph container {container_name}")
+    remove_graph_command = ["docker", "rm", "-f", container_name]
+    process = subprocess.run(
+        remove_graph_command,
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    if process.returncode != 0:
+        logging.error(
+            f"Failed to remove blazegraph container. Docker output:\n{process.stdout}"
         )
-        if process.returncode != 0:
-            logging.error(
-                f"Failed to remove blazegraph container. Docker output:\n{process.stdout}"
-            )
-            raise Exception("Failed to remove blazegraph container")
-        logging.info(f"Container {container_name} removed.")
+        raise Exception("Failed to remove blazegraph container")
+    logging.info(f"Container {container_name} removed.")
 
+
+def initialize_blazegraph(args):
+    if args.remove_previous_graph:
+        remove_previous_graph(args)
+    container_name = f"blazegraph{args.port}"
     logging.info(
         f"Running blazegraph container {container_name} on host port {args.port}"
     )
@@ -182,7 +190,7 @@ def initialize_agraph(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', help='Graph-admin command. initialize_graph and load_data commands supported')
+    parser.add_argument('command', help='Graph-admin command. initialize_graph, remove_previous_graph and load_data commands supported')
     parser.add_argument(
         "--port",
         help="blazegraph server port",
@@ -197,7 +205,6 @@ def parse_args():
     parser.add_argument(
         "--data_file",
         help="file with nq directories in gcs",
-        default="../graphs_data.txt",
     )
     parser.add_argument(
         "--data_list",
@@ -214,14 +221,16 @@ def _configure_logging():
     FORMAT = "%(asctime)-15s %(levelname)s: %(message)s"
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.INFO)
+    logfile = os.path.join(tempfile.gettempdir(), "graph-admin.log")
     logging.basicConfig(
         format=FORMAT,
         level=logging.DEBUG,
         handlers=[
             stream_handler,
-            logging.FileHandler(f"../graph-admin.log"),
+            logging.FileHandler(logfile),
         ],
     )
+    logging.info(f"Writing logs to {logfile}")
 
 
 def main():
@@ -237,11 +246,16 @@ def main():
             initialize_blazegraph(args)
             args.graph = "blazegraph"  # TODO
         else:
-            logging.error(f"Unknown graph name {args.graph}")
-            raise Exception("Unknown graph name.")
+            logging.error(f"Unknown graph type {args.graph}")
+            raise Exception("Unknown graph type.")
     elif args.command == "load_data":
         data_directories = get_data_directories(args)
         load_data_from_cloud(args, data_directories)
+    elif args.command == "remove_previous_graph":
+        remove_previous_graph(args)
+    elif args.command is None:
+        logging.error(f"Admin command not found.")
+        raise Exception("Admin command not found.")
     else:
         logging.error(f"Unknown command: {args.graph}")
         raise Exception("Unknown command.")

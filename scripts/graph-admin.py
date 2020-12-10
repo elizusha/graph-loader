@@ -3,12 +3,14 @@ import subprocess
 import requests
 import logging
 import time
+import os
+import os.path
+import tempfile
 from google.cloud.storage import Client
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
 from typing import Iterator, List, NamedTuple
 from urllib.parse import quote_plus
-import os.path
-import tempfile
+
 
 def create_gcs_client():
     try:
@@ -21,6 +23,25 @@ def create_gcs_client():
 
 
 def download_files(path: str) -> Iterator[str]:
+    GCS_PATH_PREFIX: str = "gs://"
+
+    if path.startswith(GCS_PATH_PREFIX):
+        return download_gcs_files(path[len(GCS_PATH_PREFIX):])
+    else:
+        return download_local_files(path)
+
+
+def download_local_files(path: str) -> Iterator[str]:
+    logging.info(f"Using following local directory: '{path}'")
+    for file_name in os.listdir(path):
+        if file_name.endswith(".nq"):
+            logging.info(f"Loading '{file_name}'")
+            with open(os.path.join(path, file_name)) as file:
+                data = file.read()
+                yield data
+
+
+def download_gcs_files(path: str) -> Iterator[str]:
     client = create_gcs_client()
     bucket_name, blobs_directory_name = path.split("/", maxsplit=1)
     logging.info(f"Using following GCS bucket: '{bucket_name}'")
@@ -48,6 +69,8 @@ def parse_graph(file_contents: str) -> ConjunctiveGraph:
 
 
 def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
+    MAX_QUERY_LENGTH: int = 200000 - 100
+
     for term in graph.quads():
         graph_name = term[3].identifier
         break
@@ -55,7 +78,6 @@ def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
     logging.info(f"Graph name is {graph_name}")
     nts = nt_data.split("\n")
     queries = []
-    MAX_QUERY_LENGTH: int = 200000 - 100
     query_len = 0
     query_data = []
     for i in range(0, len(nts)):

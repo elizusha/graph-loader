@@ -89,9 +89,10 @@ def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
     queries = []
     query_len = 0
     query_data = []
+    query_lenth_limit = MAX_QUERY_LENGTH - len(graph_name)
     for i in range(0, len(nts)):
         nq_encoded_len = len(quote_plus(nts[i] + "\n"))
-        if query_len + nq_encoded_len > MAX_QUERY_LENGTH:
+        if query_len + nq_encoded_len > query_lenth_limit:
             query_data_str = "\n".join(query_data)
             queries.append(
                 f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}"

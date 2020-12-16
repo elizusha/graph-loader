@@ -8,11 +8,17 @@ import os.path
 import tempfile
 from google.cloud.storage import Client
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
-from typing import Iterator, List, NamedTuple, Optional
+from typing import Iterator, List, NamedTuple, Optional, Set
 from urllib.parse import quote_plus
 
 
 gcs_client: Optional[Client] = None
+
+
+class FileContent(NamedTuple):
+    file_name: str
+    data: str
+
 
 def create_gcs_client():
     global gcs_client
@@ -27,53 +33,61 @@ def create_gcs_client():
     return gcs_client
 
 
-def download_files(path: str) -> Iterator[str]:
+def download_files(path: str) -> Iterator[FileContent]:
     GCS_PATH_PREFIX: str = "gs://"
 
     if path.startswith(GCS_PATH_PREFIX):
-        return download_gcs_files(path[len(GCS_PATH_PREFIX):])
+        return download_gcs_files(path[len(GCS_PATH_PREFIX) :])
     else:
         return download_local_files(path)
 
 
-def download_local_files(path: str) -> Iterator[str]:
-    logging.info(f"Using following local directory: '{path}'")
-    for file_name in os.listdir(path):
-        if file_name.endswith(".nq"):
-            logging.info(f"Loading '{file_name}'")
-            with open(os.path.join(path, file_name)) as file:
+def download_local_files(path: str) -> Iterator[FileContent]:
+    logging.info(f"Using following local path: '{path}'")
+    if os.path.isfile(path):
+        file_paths = [path]
+    elif os.path.isdir(path):
+        file_paths = [os.path.join(path, file_name) for file_name in os.listdir(path)]
+    else:
+        logging.warning(f"Not downloading '{path}': wrong format")
+    for file_path in file_paths:
+        if file_path.endswith(".nq"):
+            logging.info(f"Loading '{file_path}'")
+            with open(file_path) as file:
                 data = file.read()
-                yield data
+                yield FileContent(file_path, data)
+        else:
+            logging.warning(f"Not downloading '{fail_path}': it is not .nq file")
 
 
-def download_gcs_files(path: str) -> Iterator[str]:
+def download_gcs_files(path: str) -> Iterator[FileContent]:
     client = create_gcs_client()
-    bucket_name, blobs_directory_name = path.split("/", maxsplit=1)
+    bucket_name, blobs_path = path.split("/", maxsplit=1)
     logging.info(f"Using following GCS bucket: '{bucket_name}'")
-    logging.info(f"Using following GCS directory: '{blobs_directory_name}'")
+    logging.info(f"Using following GCS path: '{blobs_path}'")
     try:
         bucket = client.bucket(bucket_name)
-        all_blobs = list(client.list_blobs(bucket, prefix=blobs_directory_name))
+        all_blobs = list(client.list_blobs(bucket, prefix=blobs_path))
     except Exception as e:
-        logging.error(f"Failed to list files in bucket, skipping this directory. Error:\n{e}")
+        logging.error(f"Failed to list files in bucket, skipping path. Error:\n{e}")
         return
     if not all_blobs:
         logging.warning(
-            f"GCS path error: '{blobs_directory_name}' not found or doesn't contain nq files"
+            f"GCS path error: '{blobs_path}' not found or doesn't contain nq files"
         )
     for blob in all_blobs:
         logging.info(f"Downloading '{blob.name}'")
         if blob.name[-3:] == ".nq":
             data = blob.download_as_string().decode()
             logging.info(f"Succesfully downloaded: '{blob.name}'")
-            yield data
+            yield FileContent(os.path.join(bucket_name, blob.name), data)
         else:
             logging.warning(f"Not downloading '{blob.name}': it is not .nq file")
 
 
-def parse_graph(file_contents: str) -> ConjunctiveGraph:
+def parse_graph(file_content: str) -> ConjunctiveGraph:
     graph = ConjunctiveGraph(store="IOMemory")
-    graph.parse(data=file_contents, format="nquads")
+    graph.parse(data=file_content, format="nquads")
     return graph
 
 
@@ -107,18 +121,23 @@ def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
 
 
 def insert_data(blazegraph_url: str, insert_query: str) -> None:
+    from urllib.parse import urlencode
+
     res = requests.post(blazegraph_url, data={"update": insert_query})
     if not res.ok:
         logging.warning(f"Failed to insert data into graph: {res}")
+        with open("tmp.txt", "wt") as f:
+            f.write(urlencode({"update": insert_query}))
+            exit(1)
 
 
-class DataDirectory(NamedTuple):
+class DataInfo(NamedTuple):
     path: str
     license_url: str
 
     @classmethod
-    def parse(cls, data_directory_str: str) -> "DataDirectory":
-        chunks = data_directory_str.split("\t")
+    def parse(cls, data_info_str: str) -> "DataInfo":
+        chunks = data_info_str.split("\t")
         path = chunks[0].strip()
         license = ""
         if len(chunks) > 1:
@@ -126,7 +145,7 @@ class DataDirectory(NamedTuple):
         return cls(path, license)
 
 
-def get_data_directories(args) -> List[DataDirectory]:
+def get_data_directories(args) -> List[DataInfo]:
     directories = []
     if args.data_list:
         directories = [dir.strip() for dir in args.data_list.split(",")]
@@ -140,9 +159,7 @@ def get_data_directories(args) -> List[DataDirectory]:
     else:
         logging.error(f"One of --data_list or --data_file required.")
         raise Exception("One of --data_list or --data_file required.")
-    return [
-        DataDirectory.parse(data_directory_str) for data_directory_str in directories
-    ]
+    return [DataInfo.parse(data_info_str) for data_info_str in directories]
 
 
 def print_license(license):
@@ -150,13 +167,15 @@ def print_license(license):
         logging.info(f"License: {license}")
 
 
-def load_data_from_cloud(args, data_directories):
-    for data_directory in data_directories:
-        print_license(data_directory.license_url)
-        for file_contents in download_files(data_directory.path):
-            graph: ConjunctiveGraph = parse_graph(file_contents)
+def load_data(args, data_directories):
+    for data_info in data_directories:
+        print_license(data_info.license_url)
+        for file_content in download_files(data_info.path):
+            graph: ConjunctiveGraph = parse_graph(file_content.data)
             if args.graph == "blazegraph":
-                blazegraph_url = f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
+                blazegraph_url = (
+                    f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
+                )
                 insert_queries: List[str] = build_blazegraph_insert_queries(graph)
                 for i, query in enumerate(insert_queries):
                     logging.info(f"Running insert query {i+1} / {len(insert_queries)}")
@@ -222,7 +241,10 @@ def initialize_agraph(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', help='Graph-admin command. initialize_graph, remove_previous_graph and load_data commands supported')
+    parser.add_argument(
+        "command",
+        help="Graph-admin command. initialize_graph, remove_previous_graph and load_data commands supported",
+    )
     parser.add_argument(
         "--port",
         help="blazegraph server port",
@@ -244,7 +266,8 @@ def parse_args():
     )
     parser.add_argument(
         "--graph",
-        help="Graph to load data. blazegraph and araph types supported",
+        default="blazegraph",
+        help="Graph to load data. Only blazegraph is currently supported",
     )
     return parser.parse_args()
 
@@ -273,18 +296,12 @@ def main():
             initialize_blazegraph(args)
         elif args.graph == "agraph":
             initialize_agraph(args)
-        elif not args.graph:
-            logging.warning(f"No graph selected. Default graph used: Blazegraph")
-            initialize_blazegraph(args)
-            args.graph = "blazegraph"  # TODO
-        else:
-            logging.error(f"Unknown graph type {args.graph}")
-            raise Exception("Unknown graph type.")
     elif args.command == "load_data":
         data_directories = get_data_directories(args)
-        load_data_from_cloud(args, data_directories)
+        load_data(args, data_directories)
     elif args.command == "remove_previous_graph":
-        remove_previous_graph(args)
+        if args.graph == "blazegraph":
+            remove_previous_graph(args)
     elif args.command is None:
         logging.error(f"Admin command not found.")
         raise Exception("Admin command not found.")

@@ -6,7 +6,8 @@ import time
 import os
 import os.path
 import tempfile
-from google.cloud.storage import Client
+from glob import glob
+from google.cloud.storage import Client, Bucket, Blob
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
 from typing import Iterator, List, NamedTuple, Optional, Set
 from urllib.parse import quote_plus
@@ -20,7 +21,7 @@ class FileContent(NamedTuple):
     data: str
 
 
-def create_gcs_client():
+def create_gcs_client() -> Client:
     global gcs_client
     if gcs_client is None:
         try:
@@ -44,30 +45,31 @@ def download_files(path: str) -> Iterator[FileContent]:
 
 def download_local_files(path: str) -> Iterator[FileContent]:
     logging.info(f"Using following local path: '{path}'")
+    file_paths: List[str]
     if os.path.isfile(path):
         file_paths = [path]
     elif os.path.isdir(path):
-        file_paths = [os.path.join(path, file_name) for file_name in os.listdir(path)]
+        file_paths = glob(os.path.join(path, "*.nq"))
     else:
         logging.warning(f"Not downloading '{path}': wrong format")
     for file_path in file_paths:
         if file_path.endswith(".nq"):
             logging.info(f"Loading '{file_path}'")
             with open(file_path) as file:
-                data = file.read()
+                data: str = file.read()
                 yield FileContent(file_path, data)
         else:
             logging.warning(f"Not downloading '{fail_path}': it is not .nq file")
 
 
 def download_gcs_files(path: str) -> Iterator[FileContent]:
-    client = create_gcs_client()
+    client: Client = create_gcs_client()
     bucket_name, blobs_path = path.split("/", maxsplit=1)
     logging.info(f"Using following GCS bucket: '{bucket_name}'")
     logging.info(f"Using following GCS path: '{blobs_path}'")
     try:
-        bucket = client.bucket(bucket_name)
-        all_blobs = list(client.list_blobs(bucket, prefix=blobs_path))
+        bucket: Bucket = client.bucket(bucket_name)
+        all_blobs: List[Blob] = list(client.list_blobs(bucket, prefix=blobs_path))
     except Exception as e:
         logging.error(f"Failed to list files in bucket, skipping path. Error:\n{e}")
         return
@@ -78,7 +80,7 @@ def download_gcs_files(path: str) -> Iterator[FileContent]:
     for blob in all_blobs:
         logging.info(f"Downloading '{blob.name}'")
         if blob.name[-3:] == ".nq":
-            data = blob.download_as_string().decode()
+            data: str = blob.download_as_string().decode()
             logging.info(f"Succesfully downloaded: '{blob.name}'")
             yield FileContent(os.path.join(bucket_name, blob.name), data)
         else:
@@ -95,19 +97,19 @@ def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
     MAX_QUERY_LENGTH: int = 200000 - 100
 
     for term in graph.quads():
-        graph_name = term[3].identifier
+        graph_name: str = term[3].identifier
         break
-    nt_data = graph.serialize(format="nt").decode()
+    nt_data: str = graph.serialize(format="nt").decode()
     logging.info(f"Graph name is {graph_name}")
-    nts = nt_data.split("\n")
-    queries = []
-    query_len = 0
-    query_data = []
-    query_lenth_limit = MAX_QUERY_LENGTH - len(graph_name)
+    nts: List[str] = nt_data.split("\n")
+    queries: List[str] = []
+    query_len: int = 0
+    query_data: List[str] = []
+    query_lenth_limit: int = MAX_QUERY_LENGTH - len(graph_name)
     for i in range(0, len(nts)):
-        nq_encoded_len = len(quote_plus(nts[i] + "\n"))
+        nq_encoded_len: int = len(quote_plus(nts[i] + "\n"))
         if query_len + nq_encoded_len > query_lenth_limit:
-            query_data_str = "\n".join(query_data)
+            query_data_str: str = "\n".join(query_data)
             queries.append(
                 f"INSERT DATA {{ GRAPH <{graph_name}> {{ {query_data_str} }} }}"
             )
@@ -121,14 +123,9 @@ def build_blazegraph_insert_queries(graph: ConjunctiveGraph) -> List[str]:
 
 
 def insert_data(blazegraph_url: str, insert_query: str) -> None:
-    from urllib.parse import urlencode
-
     res = requests.post(blazegraph_url, data={"update": insert_query})
     if not res.ok:
         logging.warning(f"Failed to insert data into graph: {res}")
-        with open("tmp.txt", "wt") as f:
-            f.write(urlencode({"update": insert_query}))
-            exit(1)
 
 
 class DataInfo(NamedTuple):
@@ -137,16 +134,16 @@ class DataInfo(NamedTuple):
 
     @classmethod
     def parse(cls, data_info_str: str) -> "DataInfo":
-        chunks = data_info_str.split("\t")
-        path = chunks[0].strip()
-        license = ""
+        chunks: List[str] = data_info_str.split("\t")
+        path: str = chunks[0].strip()
+        license: str = ""
         if len(chunks) > 1:
             license = chunks[1].strip()
         return cls(path, license)
 
 
 def get_data_directories(args) -> List[DataInfo]:
-    directories = []
+    directories: List[str] = []
     if args.data_list:
         directories = [dir.strip() for dir in args.data_list.split(",")]
     elif args.data_file:
@@ -162,18 +159,18 @@ def get_data_directories(args) -> List[DataInfo]:
     return [DataInfo.parse(data_info_str) for data_info_str in directories]
 
 
-def print_license(license):
+def print_license(license: str) -> None:
     if license:
         logging.info(f"License: {license}")
 
 
-def load_data(args, data_directories):
+def load_data(args, data_directories: List[DataInfo]) -> None:
     for data_info in data_directories:
         print_license(data_info.license_url)
         for file_content in download_files(data_info.path):
             graph: ConjunctiveGraph = parse_graph(file_content.data)
             if args.graph == "blazegraph":
-                blazegraph_url = (
+                blazegraph_url: str = (
                     f"http://localhost:{args.port}/bigdata/namespace/kb/sparql"
                 )
                 insert_queries: List[str] = build_blazegraph_insert_queries(graph)
@@ -184,10 +181,10 @@ def load_data(args, data_directories):
                 raise Exception("Not implemented")
 
 
-def remove_previous_graph(args):
-    container_name = f"blazegraph{args.port}"
+def remove_previous_graph(args) -> None:
+    container_name: str = f"blazegraph{args.port}"
     logging.info(f"Removing blazegraph container {container_name}")
-    remove_graph_command = ["docker", "rm", "-f", container_name]
+    remove_graph_command: List[str] = ["docker", "rm", "-f", container_name]
     process = subprocess.run(
         remove_graph_command,
         stderr=subprocess.STDOUT,
@@ -202,14 +199,14 @@ def remove_previous_graph(args):
     logging.info(f"Container {container_name} removed.")
 
 
-def initialize_blazegraph(args):
+def initialize_blazegraph(args) -> None:
     if args.remove_previous_graph:
         remove_previous_graph(args)
-    container_name = f"blazegraph{args.port}"
+    container_name: str = f"blazegraph{args.port}"
     logging.info(
         f"Running blazegraph container {container_name} on host port {args.port}"
     )
-    run_graph_command = [
+    run_graph_command: List[str] = [
         "docker",
         "run",
         "--name",
@@ -235,11 +232,11 @@ def initialize_blazegraph(args):
     time.sleep(5)
 
 
-def initialize_agraph(args):
+def initialize_agraph(args) -> None:
     raise Exception("Not implemented")
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
@@ -272,8 +269,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def _configure_logging():
-    FORMAT = "%(asctime)-15s %(levelname)s: %(message)s"
+def configure_logging() -> None:
+    FORMAT: str = "%(asctime)-15s %(levelname)s: %(message)s"
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.INFO)
     logfile = os.path.join(tempfile.gettempdir(), "graph-admin.log")
@@ -290,7 +287,7 @@ def _configure_logging():
 
 def main():
     args = parse_args()
-    _configure_logging()
+    configure_logging()
     if args.command == "initialize_graph":
         if args.graph == "blazegraph":
             initialize_blazegraph(args)

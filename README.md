@@ -52,3 +52,33 @@ Follow this instruction to get [Blazegraph](https://blazegraph.com) running insi
             { ?protein ?property ?value}
         }
         ```
+## Appendix
+
+### Source data
+
+`graph-admin` can load data both from local files and Google Cloud Storage.
+
+To specify sources create a text file in format specified below and pass the name of this file through the `--data_file` flag.
+
+Each line in the data file represents a single source of data: either a single file or a directory on a local file system or in GCS.
+
+For example to load the data from a single local file add a line with the path to this file:
+
+```
+data/disprot.org/graph.nq
+```
+
+To load the data from GCS directory add a line with the "gs://" prefix and the full path to this directory (including bucket):
+```
+gs://wikidata-collab-1-crawler/mobidb.org/single_file
+```
+
+You can optionally add a link to the license associated with the data separated by tab symbol.
+Then `graph-admin` will print information about the license when loading the data.
+```
+data/disprot.org/graph.nq	https://creativecommons.org/licenses/by/4.0/
+```
+
+### Exporting result data
+
+The result of loading the data is a running container with the graph. You can then export this container to a Docker image which can then be uploaded to a registry and easily distributed from there. 

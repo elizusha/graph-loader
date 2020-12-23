@@ -6,6 +6,7 @@ import time
 import os
 import os.path
 import tempfile
+import re
 from glob import glob
 from google.cloud.storage import Client, Bucket, Blob
 from rdflib import Graph, URIRef, Literal, ConjunctiveGraph
@@ -59,7 +60,7 @@ def download_local_files(path: str) -> Iterator[FileContent]:
                 data: str = file.read()
                 yield FileContent(file_path, data)
         else:
-            logging.warning(f"Not downloading '{fail_path}': it is not .nq file")
+            logging.warning(f"Not downloading '{file_path}': it is not .nq file")
 
 
 def download_gcs_files(path: str) -> Iterator[FileContent]:
@@ -181,21 +182,26 @@ def load_data(args, data_directories: List[DataInfo]) -> None:
                 raise Exception("Not implemented")
 
 
-def remove_previous_graph(args) -> None:
-    container_name: str = f"blazegraph{args.port}"
-    logging.info(f"Removing blazegraph container {container_name}")
-    remove_graph_command: List[str] = ["docker", "rm", "-f", container_name]
+def run_docker_command(command: List[str]) -> str:
     process = subprocess.run(
-        remove_graph_command,
+        command,
         stderr=subprocess.STDOUT,
         stdout=subprocess.PIPE,
         encoding="utf-8",
     )
     if process.returncode != 0:
         logging.error(
-            f"Failed to remove blazegraph container. Docker output:\n{process.stdout}"
+            f"Failed to run Docker container command. Docker output:\n{process.stdout}"
         )
-        raise Exception("Failed to remove blazegraph container")
+        raise Exception("Failed to run Docker container command.")
+    return process.stdout.strip()
+
+
+def remove_previous_graph(args) -> None:
+    container_name: str = f"blazegraph{args.port}"
+    logging.info(f"Removing blazegraph container {container_name}")
+    graph_command: List[str] = ["docker", "rm", "-f", container_name]
+    run_docker_command(graph_command)
     logging.info(f"Container {container_name} removed.")
 
 
@@ -206,7 +212,7 @@ def initialize_blazegraph(args) -> None:
     logging.info(
         f"Running blazegraph container {container_name} on host port {args.port}"
     )
-    run_graph_command: List[str] = [
+    graph_command: List[str] = [
         "docker",
         "run",
         "--name",
@@ -216,17 +222,7 @@ def initialize_blazegraph(args) -> None:
         f"{args.port}:8080",
         "lyrasis/blazegraph:2.1.5",
     ]
-    process = subprocess.run(
-        run_graph_command,
-        stderr=subprocess.STDOUT,
-        stdout=subprocess.PIPE,
-        encoding="utf-8",
-    )
-    if process.returncode != 0:
-        logging.error(
-            f"Failed to create blazegraph container. Docker output:\n{process.stdout}"
-        )
-        raise Exception("Failed to create blazegraph container")
+    run_docker_command(graph_command)
     logging.info(f"Blazegraph container created. Listening on host port {args.port}")
     # Blazegraph takes some time to start.
     time.sleep(5)
@@ -234,6 +230,102 @@ def initialize_blazegraph(args) -> None:
 
 def initialize_agraph(args) -> None:
     raise Exception("Not implemented")
+
+
+def run_yasgui(args) -> None:
+    # ---Blazegraph IP---
+    blazegraph_ip_command: List[str] = [
+        "docker",
+        "inspect",
+        "--format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'",
+        args.blazegraph_name,
+    ]
+    blazegraph_ip = run_docker_command(blazegraph_ip_command).replace("'", "")
+    logging.info(f"Blazegraph IP: {blazegraph_ip}")
+
+    # ---run yasgui---
+    yasgui_command: List[str] = [
+        "docker",
+        "run",
+        "-d",
+        "--env",
+        f"DEFAULT_SPARQL_ENDPOINT=http://{args.yasgui_endpoint}/blazegraph/bigdata/sparql",
+        "erikap/yasgui",
+    ]
+    yasgui_container_name = run_docker_command(yasgui_command).split("\n")[-1]
+    logging.info(f"Yasgui container created. Container name: {yasgui_container_name}")
+
+    # ---Yasgui IP---
+    yasgui_ip_command: List[str] = [
+        "docker",
+        "inspect",
+        "--format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'",
+        yasgui_container_name,
+    ]
+
+    yasgui_ip = run_docker_command(yasgui_ip_command).replace("'", "")
+
+    logging.info(f"Yasgui IP: {yasgui_ip}")
+
+    # ---start nginx---
+    nginx_port = args.yasgui_endpoint.split(":")[1]
+    nginx_command: List[str] = [
+        "docker",
+        "run",
+        "-p",
+        f"{nginx_port}:80",
+        "-d",
+        "nginx",
+    ]
+    nginx_container_name = run_docker_command(nginx_command).split("\n")[-1]
+    logging.info(f"nginx container created. Container name: {nginx_container_name}")
+
+    # ---default.conf---
+    conf_content = f"""server {{
+    listen       80;
+    listen  [::]:80;
+    server_name  localhost;
+
+    location /blazegraph/ {{
+        proxy_pass http://{blazegraph_ip}:8080/;
+    }}
+
+    location / {{
+        proxy_pass http://{yasgui_ip}/;
+    }}
+
+    error_page   500 502 503 504  /50x.html;
+    location = /50x.html {{
+        root   /usr/share/nginx/html;
+    }}
+}}
+    """
+    conf_file_path = os.path.join(tempfile.gettempdir(), "default.conf")
+    with open(conf_file_path, "w") as file:
+        file.write(conf_content)
+
+    # ---mount conf---
+    cp_conf_command: List[str] = [
+        "docker",
+        "cp",
+        conf_file_path,
+        f"{nginx_container_name}:/etc/nginx/conf.d/default.conf",
+    ]
+    run_docker_command(cp_conf_command)
+    logging.info(f"default.conf file added.")
+
+    # ---reload nginx---
+    nginx_reloading_command: List[str] = [
+        "docker",
+        "exec",
+        "-ti",
+        nginx_container_name,
+        "nginx",
+        "-s",
+        "reload",
+    ]
+    run_docker_command(nginx_reloading_command)
+    logging.info(f"nginx reloaded.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -265,6 +357,16 @@ def parse_args() -> argparse.Namespace:
         "--graph",
         default="blazegraph",
         help="Graph to load data. Only blazegraph is currently supported",
+    )
+    parser.add_argument(
+        "--yasgui_endpoint",
+        default="127.0.0.1:8888",
+        help='Yasgui external endpoint. Format: "HOST:PORT". Only for run_yasgui command.',
+    )
+    parser.add_argument(
+        "--blazegraph_name",
+        default="blazegraph8885",
+        help="Graph name for yasgui queries. Only for run_yasgui command.",
     )
     return parser.parse_args()
 
@@ -299,6 +401,8 @@ def main():
     elif args.command == "remove_previous_graph":
         if args.graph == "blazegraph":
             remove_previous_graph(args)
+    elif args.command == "run_yasgui":
+        run_yasgui(args)
     elif args.command is None:
         logging.error(f"Admin command not found.")
         raise Exception("Admin command not found.")
